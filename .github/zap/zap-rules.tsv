@@ -1,0 +1,79 @@
+# ZAP Baseline / Full Scan rule configuration
+# Format: <rule-id>\t<FAIL|WARN|IGNORE>\t<rule-name>
+#
+# FAIL  → non-zero exit code (blocks the pipeline gate)
+# WARN  → logged as warning (visible in report, does not block)
+# IGNORE → completely suppressed
+#
+# Rule IDs: https://www.zaproxy.org/docs/alerts/
+
+# ── High-severity: FAIL ──────────────────────────────────────────────────────
+10202	FAIL	Absence of Anti-CSRF Tokens
+10096	FAIL	Timestamp Disclosure
+40014	FAIL	Cross-Site Request Forgery
+40018	FAIL	SQL Injection
+40019	FAIL	SQL Injection - MySQL
+40020	FAIL	SQL Injection - Hypersonic SQL
+40021	FAIL	SQL Injection - Oracle
+40022	FAIL	SQL Injection - SQLite
+40024	FAIL	SQL Injection - Hibernate
+40026	FAIL	Cross Site Scripting (DOM Based)
+40027	FAIL	SQL Injection - MsSQL
+40028	FAIL	ELMAH Information Leak
+40029	FAIL	Trace.axd Information Leak
+40032	FAIL	.htaccess Information Leak
+40034	FAIL	.env Information Leak
+90019	FAIL	Server Side Code Injection
+90020	FAIL	Remote OS Command Injection
+90022	FAIL	Application Error Disclosure
+90034	FAIL	Cloud Metadata Potentially Exposed
+
+# ── Medium-severity: FAIL ────────────────────────────────────────────────────
+10010	FAIL	Cookie No HttpOnly Flag
+10011	FAIL	Cookie Without Secure Flag
+10012	FAIL	Password Autocomplete in Browser
+10015	FAIL	Re-examine Cache-control Directives
+10016	FAIL	Web Browser XSS Protection Not Enabled
+10017	FAIL	Cross-Domain JavaScript Source File Inclusion
+10019	FAIL	Content-Type Header Missing
+10020	FAIL	X-Frame-Options Header Not Set
+10021	FAIL	X-Content-Type-Options Header Missing
+10036	FAIL	Server Leaks Version Information via "Server" HTTP Response Header Field
+10038	FAIL	Content Security Policy (CSP) Header Not Set
+10040	FAIL	Secure Pages Include Mixed Content
+10045	FAIL	Source Code Disclosure - /WEB-INF folder
+10054	FAIL	Cookie Without SameSite Attribute
+10055	FAIL	CSP Scanner
+10056	FAIL	X-Debug-Token Information Leak
+10098	FAIL	Cross-Domain Misconfiguration
+
+# ── Low-severity: WARN ───────────────────────────────────────────────────────
+10003	WARN	Vulnerable JS Library
+10023	WARN	Information Disclosure - Debug Error Messages
+10024	WARN	Information Disclosure - Sensitive Information in URL
+10025	WARN	Information Disclosure - Sensitive Information in HTTP Referrer Header
+10026	WARN	HTTP Parameter Override
+10027	WARN	Information Disclosure - Suspicious Comments
+10028	WARN	Open Redirect
+10029	WARN	Cookie Poisoning
+10030	WARN	User Controllable Charset
+10031	WARN	User Controllable HTML Element Attribute (Potential XSS)
+10032	WARN	Viewstate
+10033	WARN	Directory Browsing
+10035	WARN	Strict-Transport-Security Header Not Set
+10037	WARN	Server Leaks Information via "X-Powered-By" HTTP Response Header Field(s)
+10041	WARN	HTTP to HTTPS Insecure Transition in Form Post
+10042	WARN	HTTPS to HTTP Insecure Transition in Form Post
+10043	WARN	User Controllable JavaScript Event (XSS)
+10044	WARN	Big Redirect Detected (Potential Sensitive Information Leak)
+10062	WARN	PII Disclosure
+
+# ── Informational: IGNORE ────────────────────────────────────────────────────
+# Suppress noisy passive scanner rules for this baseline
+10049	IGNORE	Non-Storable Content
+10050	IGNORE	Retrieved from Cache
+10051	IGNORE	Relative Path Confusion
+10052	IGNORE	X-ChromeLogger-Data (XCOLD) Header Information Leak
+10061	IGNORE	X-AspNet-Version Response Header Scanner
+10095	IGNORE	Backup File Disclosure
+10104	IGNORE	User Agent Fuzzer

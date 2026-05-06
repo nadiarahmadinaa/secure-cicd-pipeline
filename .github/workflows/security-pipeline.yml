@@ -1,0 +1,385 @@
+name: Secure CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop, "release/**"]
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened]
+  schedule:
+    # Full security scan every Monday at 02:00 UTC
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+    inputs:
+      fail_on_severity:
+        description: "Minimum severity to fail the pipeline (CRITICAL, HIGH, MEDIUM)"
+        required: false
+        default: "HIGH"
+        type: choice
+        options: [CRITICAL, HIGH, MEDIUM]
+
+# Restrict default token to read-only; individual jobs elevate as needed
+permissions:
+  contents: read
+
+env:
+  # Image pushed to GHCR; change if using another registry
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  # Minimum Trivy / ZAP severity that triggers a gate failure
+  FAIL_SEVERITY: ${{ inputs.fail_on_severity || 'HIGH' }}
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  # GATE 1 — Secrets Detection (Gitleaks)
+  # Runs first; a leaked credential in-tree blocks everything downstream.
+  # ────────────────────────────────────────────────────────────────────────────
+  secrets-detection:
+    name: "Gate 1 · Secrets Detection (Gitleaks)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout (full history for commit-range scan)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Set GITLEAKS_LICENSE in repo secrets for the advanced ruleset
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+      - name: Upload Gitleaks SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: gitleaks-secrets
+        continue-on-error: true   # SARIF may not exist if gitleaks didn't run
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # GATE 2 — SAST (CodeQL)
+  # Runs after secrets pass; exits non-zero if CodeQL finds error-level issues.
+  # ────────────────────────────────────────────────────────────────────────────
+  sast-codeql:
+    name: "Gate 2 · SAST (CodeQL)"
+    needs: secrets-detection
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          config-file: .github/codeql/codeql-config.yml
+          # Use the security-extended suite for a broader ruleset
+          queries: security-extended
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Analyze
+        id: codeql-analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+          upload: true
+          output: sarif-results
+
+      - name: Security gate — block on error-level findings
+        run: |
+          SARIF_FILE="sarif-results/${{ matrix.language }}.sarif"
+          if [ ! -f "$SARIF_FILE" ]; then
+            echo "::warning::SARIF file not found; skipping threshold check"
+            exit 0
+          fi
+
+          ERRORS=$(python3 -c "
+          import json
+          with open('$SARIF_FILE') as f:
+              data = json.load(f)
+          count = sum(
+              1
+              for run in data.get('runs', [])
+              for result in run.get('results', [])
+              if result.get('level') == 'error'
+          )
+          print(count)
+          ")
+          echo "CodeQL error-level findings: $ERRORS"
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "::error::Security gate failed — $ERRORS critical CodeQL finding(s). Fix before merging."
+            exit 1
+          fi
+          echo "CodeQL gate passed — no error-level findings."
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # BUILD — Docker image (artifact passed to scan and DAST jobs)
+  # ────────────────────────────────────────────────────────────────────────────
+  build:
+    name: "Build Container Image"
+    needs: sast-codeql
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
+      - name: Build image (no push — saved as tar artifact)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: ./app/Dockerfile
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Export as OCI tar for Trivy and DAST
+          outputs: type=docker,dest=/tmp/image.tar
+          # Provenance and SBOM attestations
+          provenance: true
+          sbom: true
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/image.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # GATE 3 — Container Scanning (Trivy)
+  # Scans the built image for OS-level and dependency CVEs.
+  # ────────────────────────────────────────────────────────────────────────────
+  container-scan:
+    name: "Gate 3 · Container Scan (Trivy)"
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        id: load
+        run: |
+          docker load --input /tmp/image.tar
+          IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | head -1)
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "Loaded image: $IMAGE"
+
+      - name: Run Trivy — SARIF output (for Security tab)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.load.outputs.image }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: "CRITICAL,HIGH,MEDIUM"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          scanners: "vuln,secret,misconfig"
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-container-scan
+
+      - name: Security gate — block on unfixed CRITICAL/HIGH CVEs
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.load.outputs.image }}
+          format: table
+          exit-code: "1"
+          severity: ${{ env.FAIL_SEVERITY }},CRITICAL
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          trivyignores: .trivyignore
+
+      - name: Run Trivy — filesystem/IaC scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: "."
+          format: sarif
+          output: trivy-fs-results.sarif
+          severity: "CRITICAL,HIGH"
+          scanners: "vuln,secret,misconfig"
+
+      - name: Upload Trivy filesystem SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-fs-results.sarif
+          category: trivy-filesystem-scan
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # GATE 4 — DAST (OWASP ZAP)
+  # Spins up the container on the host network, runs ZAP baseline + API scan.
+  # ────────────────────────────────────────────────────────────────────────────
+  dast-scan:
+    name: "Gate 4 · DAST (OWASP ZAP)"
+    needs: [build, container-scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load image and start application
+        run: |
+          docker load --input /tmp/image.tar
+          IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | head -1)
+          echo "Starting $IMAGE on host network..."
+          docker run -d \
+            --name secure-api \
+            --network host \
+            --read-only \
+            --tmpfs /tmp \
+            --security-opt no-new-privileges \
+            --cap-drop ALL \
+            -e DATABASE_PATH=/tmp/app.db \
+            "$IMAGE"
+
+          # Wait up to 60 s for the health endpoint
+          echo "Waiting for application to become healthy..."
+          timeout 60 bash -c 'until curl -sf http://localhost:5000/health; do sleep 2; echo "..."; done'
+          echo "Application is up."
+
+      - name: Seed test data (makes DAST more thorough)
+        run: |
+          curl -sf -X POST http://localhost:5000/api/users \
+            -H "Content-Type: application/json" \
+            -d '{"username":"zaptest01","password":"S3cur3P@ss!"}' || true
+          curl -sf -X POST http://localhost:5000/api/items \
+            -H "Content-Type: application/json" \
+            -d '{"name":"ZAP Test Item","description":"Created by DAST seeding"}' || true
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: "http://localhost:5000"
+          rules_file_name: ".github/zap/zap-rules.tsv"
+          cmd_options: "-a -j"
+          fail_action: true
+          artifact_name: zap-baseline-report
+          allow_issue_writing: false
+
+      - name: Convert ZAP JSON report to SARIF
+        if: always()
+        run: |
+          if [ -f report_json.json ]; then
+            python3 .github/scripts/zap-to-sarif.py report_json.json zap-sarif.json
+            echo "ZAP SARIF generated."
+          else
+            echo "::warning::ZAP JSON report not found; skipping SARIF upload"
+          fi
+
+      - name: Upload ZAP SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('zap-sarif.json') != ''
+        with:
+          sarif_file: zap-sarif.json
+          category: zap-dast-scan
+
+      - name: Stop application container
+        if: always()
+        run: docker rm -f secure-api || true
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # SUMMARY — Aggregate all gate results; blocks PR merge if any gate failed.
+  # ────────────────────────────────────────────────────────────────────────────
+  security-summary:
+    name: "Security Gate Summary"
+    needs: [secrets-detection, sast-codeql, container-scan, dast-scan]
+    runs-on: ubuntu-latest
+    if: always()
+    permissions:
+      contents: read
+    steps:
+      - name: Evaluate gates and write job summary
+        env:
+          GATE_SECRETS: ${{ needs.secrets-detection.result }}
+          GATE_SAST: ${{ needs.sast-codeql.result }}
+          GATE_CONTAINER: ${{ needs.container-scan.result }}
+          GATE_DAST: ${{ needs.dast-scan.result }}
+        run: |
+          pass() { [ "$1" = "success" ] && echo "✅ Passed" || echo "❌ Failed ($1)"; }
+
+          {
+            echo "## Security Pipeline — Gate Results"
+            echo ""
+            echo "| # | Gate | Tool | Status |"
+            echo "|---|------|------|--------|"
+            echo "| 1 | Secrets Detection | Gitleaks | $(pass $GATE_SECRETS) |"
+            echo "| 2 | Static Analysis (SAST) | CodeQL | $(pass $GATE_SAST) |"
+            echo "| 3 | Container Scanning | Trivy | $(pass $GATE_CONTAINER) |"
+            echo "| 4 | Dynamic Analysis (DAST) | OWASP ZAP | $(pass $GATE_DAST) |"
+            echo ""
+            echo "> Results uploaded to the **Security** tab → Code scanning alerts."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          FAILED=0
+          for GATE in "$GATE_SECRETS" "$GATE_SAST" "$GATE_CONTAINER" "$GATE_DAST"; do
+            if [ "$GATE" != "success" ] && [ "$GATE" != "skipped" ]; then
+              FAILED=$((FAILED + 1))
+            fi
+          done
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED security gate(s) failed. Deployment is blocked. Review the Security tab for details."
+            exit 1
+          fi
+
+          echo "All security gates passed. ✅"

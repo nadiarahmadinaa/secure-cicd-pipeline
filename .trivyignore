@@ -1,0 +1,12 @@
+# Trivy ignore file — suppress accepted/mitigated CVEs
+# Format: CVE-YYYY-NNNNN [# optional comment]
+#
+# Only add entries here after formal risk acceptance with:
+#   - Justification
+#   - Mitigation control
+#   - Review date
+#
+# Example (do not add entries without the comment block):
+# CVE-2023-XXXXX  # Risk accepted: not exploitable in our threat model.
+#                 # Mitigation: network isolation prevents external access.
+#                 # Review: 2025-12-31

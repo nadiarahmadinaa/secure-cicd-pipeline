@@ -1,0 +1,62 @@
+# Gitleaks configuration
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+
+title = "Secure CI/CD — Gitleaks Config"
+
+[extend]
+# Inherit the default ruleset and extend it
+useDefault = true
+
+# ── Custom rules ──────────────────────────────────────────────────────────────
+
+[[rules]]
+id = "internal-api-key"
+description = "Internal API key pattern"
+regex = '''(?i)(internal[_-]?api[_-]?key|x-internal-token)\s*[=:]\s*['\"]?([A-Za-z0-9+/]{32,})['\"]?'''
+secretGroup = 2
+tags = ["api-key", "internal"]
+
+[[rules]]
+id = "database-url"
+description = "Database connection string with credentials"
+regex = '''(?i)(database[_-]?url|db[_-]?url|postgres[_-]?url|mysql[_-]?url)\s*[=:]\s*['\"]?[a-z]+://[^:]+:[^@]+@[^'\"\s]+['\"]?'''
+tags = ["database", "credentials"]
+
+[[rules]]
+id = "flask-secret-key"
+description = "Flask SECRET_KEY hardcoded"
+regex = '''(?i)(secret[_-]?key|flask[_-]?secret)\s*[=:]\s*['\"][^'\"]{8,}['\"]'''
+tags = ["flask", "secret"]
+
+# ── Allow-list (false-positive suppression) ───────────────────────────────────
+
+[allowlist]
+description = "Global allowlist"
+# Ignore test fixture values that look like secrets
+regexes = [
+    '''EXAMPLE_KEY_DO_NOT_USE''',
+    '''changeme''',
+    '''test[_-]?secret''',
+    '''dummy[_-]?token''',
+    '''placeholder''',
+]
+
+# Ignore documentation and example files
+paths = [
+    '''(^|/)README\.md$''',
+    '''(^|/)SECURITY\.md$''',
+    '''(^|/)docs/''',
+    '''(^|/)examples/''',
+    '''\.example$''',
+    '''\.sample$''',
+]
+
+# ── Scan configuration ────────────────────────────────────────────────────────
+
+[allowlist.commits]
+# Known safe commits (add SHAs here to skip)
+# "abc1234"
+
+[extend.rules]
+# Uncomment to also scan git log messages for secrets
+# logLevel = "verbose"

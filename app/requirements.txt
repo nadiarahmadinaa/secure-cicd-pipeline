@@ -1,0 +1,4 @@
+flask==3.1.0
+flask-limiter==3.9.0
+limits==3.14.1
+Werkzeug==3.1.3
