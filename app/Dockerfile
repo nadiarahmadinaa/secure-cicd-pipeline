@@ -5,33 +5,34 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /build
 
-# Install dependencies into user prefix so they can be copied cheaply
+# Create a virtual environment — copied wholesale into the runtime stage,
+# so packages are always on a known, explicit path regardless of which user runs them.
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user --require-hashes -r requirements.txt 2>/dev/null || \
-    pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Stage 2: minimal runtime ──────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 
-# Security: create dedicated non-root user (UID 1001)
+# Security: dedicated non-root user (UID 1001)
 RUN groupadd -r appgroup && \
     useradd -r -g appgroup -u 1001 -d /app -s /sbin/nologin appuser
 
 WORKDIR /app
 
-# Copy pip-installed packages from builder stage
-COPY --from=builder /root/.local /home/appuser/.local
+# Copy the entire venv from the builder — no path ambiguity
+COPY --from=builder /opt/venv /opt/venv
 
-# Copy application source (owned by appuser)
+# Copy application source
 COPY --chown=appuser:appgroup app.py .
 
-# Remove shell access helpers to reduce attack surface
-RUN apt-get purge -y --auto-remove && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+RUN rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 USER appuser
 
-ENV PATH=/home/appuser/.local/bin:$PATH \
+ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONFAULTHANDLER=1
