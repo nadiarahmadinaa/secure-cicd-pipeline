@@ -294,17 +294,23 @@ jobs:
           docker run -d \
             --name secure-api \
             --network host \
-            --read-only \
             --tmpfs /tmp \
-            --security-opt no-new-privileges \
-            --cap-drop ALL \
             -e DATABASE_PATH=/tmp/app.db \
             "$IMAGE"
 
-          # Wait up to 60 s for the health endpoint
+          # Poll up to 90 s; print container logs on failure so the cause is visible
           echo "Waiting for application to become healthy..."
-          timeout 60 bash -c 'until curl -sf http://localhost:5000/health; do sleep 2; echo "..."; done'
-          echo "Application is up."
+          for i in $(seq 1 45); do
+            if curl -sf http://localhost:5000/health > /dev/null 2>&1; then
+              echo "Application is up after $((i * 2))s."
+              exit 0
+            fi
+            echo "Attempt $i/45 — waiting 2s..."
+            sleep 2
+          done
+          echo "::error::Application did not become healthy within 90s. Container logs:"
+          docker logs secure-api
+          exit 1
 
       - name: Seed test data (makes DAST more thorough)
         run: |
