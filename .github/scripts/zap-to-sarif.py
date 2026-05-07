@@ -84,11 +84,16 @@ def build_sarif(zap_report: dict) -> dict:
                     },
                     "locations": [
                         {
+                            # DAST findings map to URLs, not source files.
+                            # GitHub Code Scanning requires file:// URIs, so we
+                            # point to the app entry point and record the URL in
+                            # logicalLocations for triage context.
                             "physicalLocation": {
                                 "artifactLocation": {
-                                    "uri": uri,
+                                    "uri": "app/app.py",
                                     "uriBaseId": "%SRCROOT%",
                                 },
+                                "region": {"startLine": 1},
                             },
                             "logicalLocations": [
                                 {

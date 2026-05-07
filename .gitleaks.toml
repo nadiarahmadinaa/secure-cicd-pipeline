@@ -47,6 +47,8 @@ paths = [
     '''(^|/)SECURITY\.md$''',
     '''(^|/)docs/''',
     '''(^|/)examples/''',
+    '''__pycache__/''',
+    '''\.pyc$''',
     '''\.example$''',
     '''\.sample$''',
 ]

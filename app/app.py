@@ -52,11 +52,16 @@ def init_db() -> None:
 
 @app.after_request
 def add_security_headers(response):
+    # Suppress Werkzeug version disclosure (ZAP rule 10036)
+    response.headers["Server"] = "secure-api"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    # base-uri, form-action, frame-ancestors have no default-src fallback (ZAP rule 10055)
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    )
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     return response
