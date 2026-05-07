@@ -77,3 +77,6 @@
 10061	IGNORE	X-AspNet-Version Response Header Scanner
 10095	IGNORE	Backup File Disclosure
 10104	IGNORE	User Agent Fuzzer
+# Sec-Fetch-Dest is a browser-only Fetch Metadata header; ZAP never sends it,
+# so this alert is always a false positive in API/DAST scanning.
+90005	IGNORE	Sec-Fetch-Dest Header is Missing
