@@ -43,4 +43,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')" \
     || exit 1
 
-ENTRYPOINT ["python", "app.py"]
+# Gunicorn: after_request headers apply at the WSGI layer so Server override works.
+# Werkzeug's dev server writes Server at the socket level, bypassing our hook.
+ENTRYPOINT ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--access-logfile", "-", "app:app"]
