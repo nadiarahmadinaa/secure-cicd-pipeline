@@ -175,11 +175,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # Export as OCI tar for Trivy and DAST
           outputs: type=docker,dest=/tmp/image.tar
-          # Provenance and SBOM attestations
-          provenance: true
-          sbom: true
+          # Provenance/SBOM attestations produce a manifest list which the
+          # docker tar exporter does not support — disable for local export.
+          provenance: false
+          sbom: false
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
