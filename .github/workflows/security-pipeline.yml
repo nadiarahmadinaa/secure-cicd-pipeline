@@ -219,7 +219,7 @@ jobs:
           echo "Loaded image: $IMAGE"
 
       - name: Run Trivy — SARIF output (for Security tab)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ steps.load.outputs.image }}
           format: sarif
@@ -237,7 +237,7 @@ jobs:
           category: trivy-container-scan
 
       - name: Security gate — block on unfixed CRITICAL/HIGH CVEs
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ steps.load.outputs.image }}
           format: table
@@ -248,7 +248,7 @@ jobs:
           trivyignores: .trivyignore
 
       - name: Run Trivy — filesystem/IaC scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
           scan-ref: "."
