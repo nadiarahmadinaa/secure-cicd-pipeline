@@ -46,19 +46,28 @@ jobs:
           fetch-depth: 0
 
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Set GITLEAKS_LICENSE in repo secrets for the advanced ruleset
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+        # Uses the official Docker image directly — no license required for
+        # any repo visibility. The action variant (gitleaks-action@v2) needs a
+        # paid GITLEAKS_LICENSE for private repos; this approach does not.
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/repo" \
+            zricethezav/gitleaks:latest detect \
+              --source=/repo \
+              --config=/repo/.gitleaks.toml \
+              --redact \
+              --verbose \
+              --report-format sarif \
+              --report-path /repo/gitleaks-results.sarif \
+              --exit-code 1
 
       - name: Upload Gitleaks SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: results.sarif
+          sarif_file: gitleaks-results.sarif
           category: gitleaks-secrets
-        continue-on-error: true   # SARIF may not exist if gitleaks didn't run
+        continue-on-error: true   # SARIF absent on clean runs with no findings
 
   # ────────────────────────────────────────────────────────────────────────────
   # GATE 2 — SAST (CodeQL)
